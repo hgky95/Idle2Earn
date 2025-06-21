@@ -15,6 +15,9 @@ contract RentalNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard {
     mapping(uint256 => ItemDetails) public itemDetails;
     mapping(address => uint256[]) public renterItems;
 
+    // Add escrow contract address
+    address public escrowContract;
+
     struct ItemDetails {
         address renter;
         address lender;
@@ -27,6 +30,19 @@ contract RentalNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard {
     }
 
     constructor() ERC721("Idle2Earn", "I2E") Ownable(msg.sender) {}
+
+    // Add modifier to restrict access to escrow contract
+    modifier onlyEscrow() {
+        require(
+            msg.sender == escrowContract,
+            "Only escrow contract can call this function"
+        );
+        _;
+    }
+
+    function setEscrowContract(address _escrowContract) external onlyOwner {
+        escrowContract = _escrowContract;
+    }
 
     event ItemMinted(
         uint256 indexed tokenId,
@@ -85,7 +101,7 @@ contract RentalNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Start a rental for an item
+     * @dev Start a rental for an item - restricted to escrow contract
      * @param tokenId: the ID of the item to rent
      * @param renter: the address of the renter
      * @param duration: the duration of the rental in days
@@ -94,42 +110,39 @@ contract RentalNFT is ERC721, ERC721URIStorage, Ownable, ReentrancyGuard {
         uint256 tokenId,
         address renter,
         uint32 duration
-    ) external nonReentrant {
+    ) external nonReentrant onlyEscrow {
         ItemDetails storage item = itemDetails[tokenId];
         require(item.isAvailable, "Item is not available");
         require(renter != address(0), "Renter cannot be the zero address");
         require(duration > 0, "Duration must be greater than 0");
 
+        // Only update the rental state - don't handle NFT transfers
         item.renter = renter;
         item.isAvailable = false;
         item.rentalEndTime = block.timestamp + duration * 1 days;
 
         renterItems[renter].push(tokenId);
 
-        transferFrom(item.lender, renter, tokenId);
-
         emit ItemRented(tokenId, renter, duration);
     }
 
     /**
-     * @dev End a rental for an item
+     * @dev End a rental for an item - restricted to escrow contract
      * @param tokenId: the ID of the item to return
      */
-    function endRental(uint256 tokenId) external nonReentrant {
+    function endRental(uint256 tokenId) external nonReentrant onlyEscrow {
         ItemDetails storage item = itemDetails[tokenId];
         require(item.renter != address(0), "Item is not rented");
         require(block.timestamp >= item.rentalEndTime, "Rental is not over");
 
         address renter = item.renter;
 
+        // Only update the rental state - don't handle NFT transfers
         item.renter = address(0);
-        item.lender = address(0);
         item.isAvailable = true;
         item.rentalEndTime = 0;
 
         _removeRenterItem(renter, tokenId);
-
-        transferFrom(renter, item.lender, tokenId);
 
         emit ItemReturned(tokenId, renter, item.rentalEndTime);
     }
